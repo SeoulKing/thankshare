@@ -111,7 +111,9 @@ export async function getSharesByDate(dateKey: string) {
   );
   const snapshot = await getDocs(sharesQuery);
 
-  return snapshot.docs.map(mapShare);
+  return snapshot.docs
+    .map(mapShare)
+    .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
 }
 
 export async function getDrawsByDate(dateKey: string) {
