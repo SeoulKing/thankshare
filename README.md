@@ -23,6 +23,8 @@ npx firebase-tools init hosting:github --project gratitudesharing-faaec
 
 질문에는 `SeoulKing/thankshare`, `npm ci && npm run build`, `main`을 사용합니다.
 
+추첨 관리자 비밀번호는 GitHub 저장소의 Actions secret `VITE_ADMIN_PASSWORD`에 넣습니다.
+
 ```bash
 npm run build
 firebase deploy
