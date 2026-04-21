@@ -3,6 +3,8 @@
 
 name: Deploy to Firebase Hosting on PR
 on: pull_request
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 permissions:
   checks: write
   contents: read
@@ -12,12 +14,13 @@ jobs:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: npm ci && npm run build
         env:
           VITE_ADMIN_PASSWORD: ${{ secrets.VITE_ADMIN_PASSWORD }}
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GRATITUDESHARING_FAAEC }}
-          projectId: gratitudesharing-faaec
+      - run: npm install -g firebase-tools
+      - run: |
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GRATITUDESHARING_FAAEC }}' > "$RUNNER_TEMP/firebase-sa.json"
+          firebase hosting:channel:deploy "pr-${{ github.event.pull_request.number }}" --project gratitudesharing-faaec --expires 7d
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
