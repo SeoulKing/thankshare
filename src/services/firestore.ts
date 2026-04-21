@@ -107,6 +107,7 @@ export async function getSharesByDate(dateKey: string) {
   const sharesQuery = query(
     collection(firestore, "shares"),
     where("dateKey", "==", dateKey),
+    orderBy("createdAt", "desc"),
   );
   const snapshot = await getDocs(sharesQuery);
 
