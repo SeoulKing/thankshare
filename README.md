@@ -15,12 +15,13 @@ npm run dev
 
 ## 배포
 
-GitHub Actions로 배포하려면 GitHub 저장소 Settings → Secrets and variables → Actions에 아래 Secret을 추가합니다.
+GitHub Actions 자동 배포는 Firebase CLI의 공식 GitHub 연동으로 설정합니다.
 
-- `VITE_ADMIN_PASSWORD`: 추첨 관리자 비밀번호
-- `FIREBASE_SERVICE_ACCOUNT_GRATITUDESHARING_FAAEC`: Firebase 서비스 계정 JSON 전체 내용
+```bash
+npx firebase-tools init hosting:github --project gratitudesharing-faaec
+```
 
-`main` 브랜치에 push하면 Firebase Hosting과 Firestore rules가 함께 배포됩니다.
+질문에는 `SeoulKing/thankshare`, `npm ci && npm run build`, `main`을 사용합니다.
 
 ```bash
 npm run build
