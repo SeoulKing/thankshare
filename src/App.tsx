@@ -356,9 +356,7 @@ function DrawPage({
   selectedDate: Date;
   selectedDateKey: string;
 }) {
-  const adminPassword =
-    import.meta.env.VITE_ADMIN_PASSWORD ??
-    (import.meta.env.DEV ? "change-this-password" : "");
+  const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD || "change-this-password";
   const [isUnlocked, setIsUnlocked] = useState(
     () => window.sessionStorage.getItem(ADMIN_SESSION_KEY) === "true",
   );
