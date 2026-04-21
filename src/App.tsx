@@ -6,8 +6,6 @@ import {
   getFirestoreErrorMessage,
   getDrawsByDate,
   getSharesByDate,
-  subscribeDraws,
-  subscribeShares,
 } from "./services/firestore";
 import {
   addKoreaDays,
@@ -76,7 +74,9 @@ function App() {
           onNavigate={navigate}
         />
       )}
-      {route === "/board" && <BoardPage />}
+      {route === "/board" && (
+        <BoardPage selectedDate={selectedDate} selectedDateKey={selectedDateKey} />
+      )}
       {route === "/draw" && (
         <DrawPage selectedDate={selectedDate} selectedDateKey={selectedDateKey} />
       )}
@@ -265,48 +265,62 @@ function WritePage({
   );
 }
 
-function BoardPage() {
+function BoardPage({
+  selectedDate,
+  selectedDateKey,
+}: {
+  selectedDate: Date;
+  selectedDateKey: string;
+}) {
   const [shares, setShares] = useState<Share[]>([]);
   const [drawnShareIds, setDrawnShareIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let isMounted = true;
+
     if (!isFirebaseConfigured) {
       setLoading(false);
       return;
     }
 
-    const unsubscribeShares = subscribeShares(
-      (nextShares) => {
-        setShares(nextShares);
-        setLoading(false);
-      },
-      (snapshotError) => {
-        setError(getFirestoreErrorMessage(snapshotError));
-        setLoading(false);
-      },
-    );
-    const unsubscribeDraws = subscribeDraws(
-      (nextDraws) => {
-        setDrawnShareIds(new Set(nextDraws.map((draw) => draw.shareId)));
-      },
-      (snapshotError) => {
-        setError(getFirestoreErrorMessage(snapshotError));
-      },
-    );
+    setLoading(true);
+    setError("");
+
+    void Promise.all([getSharesByDate(selectedDateKey), getDrawsByDate(selectedDateKey)])
+      .then(([dateShares, dateDraws]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setShares(dateShares);
+        setDrawnShareIds(new Set(dateDraws.map((draw) => draw.shareId)));
+      })
+      .catch((loadError) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setError(getFirestoreErrorMessage(loadError));
+      })
+      .finally(() => {
+        if (isMounted) {
+          setLoading(false);
+        }
+      });
 
     return () => {
-      unsubscribeShares();
-      unsubscribeDraws();
+      isMounted = false;
     };
-  }, []);
+  }, [selectedDateKey]);
 
   return (
     <section className="page-panel board-panel">
       <div className="section-heading">
         <p className="eyebrow">전체 나눔 보기</p>
         <h1>감사 나눔 게시판</h1>
+        <p className="section-date">{formatKoreaDate(selectedDate)}</p>
       </div>
 
       {loading && <p className="state-text">불러오는 중입니다.</p>}
