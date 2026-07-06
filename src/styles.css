@@ -259,6 +259,30 @@ h1 {
   font-weight: 700;
 }
 
+.export-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: -8px 0 24px;
+}
+
+.export-format-field {
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.export-format-field span {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.export-button {
+  min-width: 120px;
+  padding: 0 20px;
+}
+
 .share-form {
   display: grid;
   gap: 18px;
@@ -425,12 +449,14 @@ textarea:focus {
 .winner-badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid rgba(184, 121, 24, 0.22);
   border-radius: 999px;
   background: #fff7df;
   color: #9a5f0d;
+  text-align: center;
   font-size: 0.9rem;
   font-weight: 900;
 }
@@ -525,6 +551,67 @@ textarea:focus {
   padding: 16px;
 }
 
+.export-document {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 794px;
+  padding: 48px;
+  background: #fff;
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.export-document h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.2;
+}
+
+.export-document-date,
+.export-document-count {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.export-document-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.export-document-card {
+  break-inside: avoid;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.export-document-card h2 {
+  margin: 0;
+  color: var(--green);
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.export-document-time {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.export-document-card p:last-child {
+  margin: 14px 0 0;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     width: min(100% - 24px, 1120px);
@@ -580,6 +667,15 @@ textarea:focus {
 
   .draw-stats {
     grid-template-columns: 1fr;
+  }
+
+  .export-controls {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .export-format-field {
+    min-width: 0;
   }
 
   .share-meta {

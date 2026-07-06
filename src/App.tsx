@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { GROUP_NAMES } from "./config/groups";
 import {
   createDraw,
@@ -19,6 +19,7 @@ import type { Draw, NewShareInput, Share } from "./types";
 const ADMIN_SESSION_KEY = "thankyou-admin-unlocked";
 
 type Route = "/" | "/write" | "/board" | "/draw";
+type ExportFormat = "txt" | "pdf";
 
 function getRoute(pathname: string): Route {
   if (pathname === "/write" || pathname === "/board" || pathname === "/draw") {
@@ -26,6 +27,54 @@ function getRoute(pathname: string): Route {
   }
 
   return "/";
+}
+
+function getExportFileName(dateKey: string, extension: ExportFormat) {
+  return `nanum-${dateKey}.${extension}`;
+}
+
+function getShareName(share: Share) {
+  return share.name.trim() || "이름 없음";
+}
+
+function getShareCreatedAtText(share: Share) {
+  return share.createdAt ? formatKoreaDateTime(share.createdAt.toDate()) : "작성 시간 없음";
+}
+
+function buildShareExportText(shares: Share[], selectedDate: Date) {
+  const lines = [
+    "나눔 게시판",
+    `날짜: ${formatKoreaDate(selectedDate)}`,
+    `총 ${shares.length}개`,
+    "",
+  ];
+
+  shares.forEach((share, index) => {
+    lines.push(
+      `${index + 1}. ${share.groupName} / ${getShareName(share)}`,
+      `작성: ${getShareCreatedAtText(share)}`,
+      "내용:",
+      share.content,
+    );
+
+    if (index < shares.length - 1) {
+      lines.push("", "----", "");
+    }
+  });
+
+  return lines.join("\n");
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function App() {
@@ -275,6 +324,11 @@ function BoardPage({
   const [drawnShareIds, setDrawnShareIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const exportDocumentRef = useRef<HTMLDivElement>(null);
+  const canExport = !loading && !error && shares.length > 0 && !exporting;
 
   useEffect(() => {
     let isMounted = true;
@@ -286,6 +340,7 @@ function BoardPage({
 
     setLoading(true);
     setError("");
+    setExportError("");
 
     void Promise.all([getSharesByDate(selectedDateKey), getDrawsByDate(selectedDateKey)])
       .then(([dateShares, dateDraws]) => {
@@ -314,16 +369,113 @@ function BoardPage({
     };
   }, [selectedDateKey]);
 
+  const handleTextExport = () => {
+    const text = buildShareExportText(shares, selectedDate);
+    const blob = new Blob(["\ufeff", text], { type: "text/plain;charset=utf-8" });
+
+    downloadBlob(blob, getExportFileName(selectedDateKey, "txt"));
+  };
+
+  const handlePdfExport = async () => {
+    const exportDocument = exportDocumentRef.current;
+
+    if (!exportDocument) {
+      throw new Error("Export document is not ready.");
+    }
+
+    if (document.fonts) {
+      await document.fonts.ready;
+    }
+
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import("html2canvas"),
+      import("jspdf"),
+    ]);
+    const canvas = await html2canvas(exportDocument, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+    });
+    const imageData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 12;
+    const imageWidth = pageWidth - margin * 2;
+    const imageHeight = (canvas.height * imageWidth) / canvas.width;
+    const pageContentHeight = pageHeight - margin * 2;
+    let remainingHeight = imageHeight;
+    let imageTop = margin;
+
+    pdf.addImage(imageData, "PNG", margin, imageTop, imageWidth, imageHeight);
+    remainingHeight -= pageContentHeight;
+
+    while (remainingHeight > 1) {
+      imageTop -= pageContentHeight;
+      pdf.addPage();
+      pdf.addImage(imageData, "PNG", margin, imageTop, imageWidth, imageHeight);
+      remainingHeight -= pageContentHeight;
+    }
+
+    pdf.save(getExportFileName(selectedDateKey, "pdf"));
+  };
+
+  const handleExport = async () => {
+    if (!canExport) {
+      return;
+    }
+
+    setExporting(true);
+    setExportError("");
+
+    try {
+      if (exportFormat === "txt") {
+        handleTextExport();
+      } else {
+        await handlePdfExport();
+      }
+    } catch (downloadError) {
+      console.error(downloadError);
+      setExportError("파일을 저장하지 못했습니다. 다시 시도해주세요.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <section className="page-panel board-panel">
       <div className="section-heading">
-        <p className="eyebrow">전체 나눔 보기</p>
-        <h1>감사 나눔 게시판</h1>
+        <h1>나눔 게시판</h1>
         <p className="section-date">{formatKoreaDate(selectedDate)}</p>
+      </div>
+
+      <div className="export-controls" aria-label="나눔 내보내기">
+        <label className="export-format-field">
+          <span>내보내기</span>
+          <select
+            value={exportFormat}
+            onChange={(event) => {
+              setExportFormat(event.target.value as ExportFormat);
+              setExportError("");
+            }}
+            disabled={loading || exporting}
+          >
+            <option value="txt">텍스트 파일</option>
+            <option value="pdf">PDF</option>
+          </select>
+        </label>
+        <button
+          className="secondary-button export-button"
+          type="button"
+          onClick={handleExport}
+          disabled={!canExport}
+        >
+          {exporting ? "저장 중" : "저장하기"}
+        </button>
       </div>
 
       {loading && <p className="state-text">불러오는 중입니다.</p>}
       {error && <p className="form-message error-text">{error}</p>}
+      {exportError && <p className="form-message error-text">{exportError}</p>}
       {!loading && !error && shares.length === 0 && (
         <p className="state-text">아직 작성된 감사 나눔이 없습니다.</p>
       )}
@@ -357,6 +509,23 @@ function BoardPage({
             </article>
           );
         })}
+      </div>
+
+      <div className="export-document" ref={exportDocumentRef} aria-hidden="true">
+        <h1>나눔 게시판</h1>
+        <p className="export-document-date">{formatKoreaDate(selectedDate)}</p>
+        <p className="export-document-count">총 {shares.length}개</p>
+        <div className="export-document-list">
+          {shares.map((share, index) => (
+            <article className="export-document-card" key={share.id}>
+              <h2>
+                {index + 1}. {share.groupName} / {getShareName(share)}
+              </h2>
+              <p className="export-document-time">{getShareCreatedAtText(share)}</p>
+              <p>{share.content}</p>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -525,8 +694,7 @@ function DrawManager({
     <section className="page-panel draw-panel">
       <div className="section-heading draw-heading">
         <div>
-          <p className="eyebrow">추첨하기</p>
-          <h1>감사 나눔 추첨</h1>
+          <h1>나눔 추첨</h1>
         </div>
         <p className="date-pill">{formatKoreaDate(selectedDate)}</p>
       </div>
