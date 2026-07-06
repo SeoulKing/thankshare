@@ -201,8 +201,7 @@ function WritePage({
   return (
     <section className="page-panel form-panel">
       <div className="section-heading">
-        <p className="eyebrow">작성하기</p>
-        <h1>한 주간 감사했던 일</h1>
+        <h1>답변 작성하기</h1>
         <p className="section-date">{formatKoreaDate(selectedDate)}</p>
       </div>
 
