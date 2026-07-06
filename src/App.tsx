@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { GROUP_NAMES } from "./config/groups";
 import {
   createDraw,
@@ -19,7 +20,7 @@ import type { Draw, NewShareInput, Share } from "./types";
 const ADMIN_SESSION_KEY = "thankyou-admin-unlocked";
 
 type Route = "/" | "/write" | "/board" | "/draw";
-type ExportFormat = "txt" | "pdf";
+type ExportFormat = "txt" | "pdf" | "xlsx";
 
 function getRoute(pathname: string): Route {
   if (pathname === "/write" || pathname === "/board" || pathname === "/draw") {
@@ -65,6 +66,16 @@ function buildShareExportText(shares: Share[], selectedDate: Date) {
   return lines.join("\n");
 }
 
+function buildShareExportRows(shares: Share[]) {
+  return shares.map((share, index) => ({
+    작성시각: getShareCreatedAtText(share),
+    번호: index + 1,
+    속회: share.groupName,
+    이름: getShareName(share),
+    내용: share.content,
+  }));
+}
+
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -100,11 +111,14 @@ function App() {
         <button className="brand-button" type="button" onClick={() => navigate("/")}>
           전체나눔
         </button>
-        {route !== "/" && (
-          <button className="ghost-button" type="button" onClick={() => navigate("/")}>
-            처음으로
-          </button>
-        )}
+        <div className="topbar-actions">
+          <div className="topbar-page-actions" id="topbar-page-actions" />
+          {route !== "/" && (
+            <button className="ghost-button" type="button" onClick={() => navigate("/")}>
+              처음으로
+            </button>
+          )}
+        </div>
       </div>
 
       {!isFirebaseConfigured && <ConfigWarning />}
@@ -324,11 +338,50 @@ function BoardPage({
   const [drawnShareIds, setDrawnShareIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const [topbarActionsElement, setTopbarActionsElement] = useState<HTMLElement | null>(null);
   const exportDocumentRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const canExport = !loading && !error && shares.length > 0 && !exporting;
+
+  useEffect(() => {
+    setTopbarActionsElement(document.getElementById("topbar-page-actions"));
+  }, []);
+
+  useEffect(() => {
+    if (!isExportMenuOpen) {
+      return;
+    }
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (target instanceof Node && !exportMenuRef.current?.contains(target)) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsExportMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", closeOnOutsideClick);
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsideClick);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isExportMenuOpen]);
+
+  useEffect(() => {
+    if (!canExport) {
+      setIsExportMenuOpen(false);
+    }
+  }, [canExport]);
 
   useEffect(() => {
     let isMounted = true;
@@ -376,6 +429,25 @@ function BoardPage({
     downloadBlob(blob, getExportFileName(selectedDateKey, "txt"));
   };
 
+  const handleExcelExport = async () => {
+    const XLSX = await import("xlsx");
+    const worksheet = XLSX.utils.json_to_sheet(buildShareExportRows(shares));
+    worksheet["!cols"] = [
+      { wch: 24 },
+      { wch: 8 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 60 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "나눔");
+    XLSX.writeFile(workbook, getExportFileName(selectedDateKey, "xlsx"), {
+      bookType: "xlsx",
+      compression: true,
+    });
+  };
+
   const handlePdfExport = async () => {
     const exportDocument = exportDocumentRef.current;
 
@@ -391,47 +463,122 @@ function BoardPage({
       import("html2canvas"),
       import("jspdf"),
     ]);
-    const canvas = await html2canvas(exportDocument, {
-      backgroundColor: "#ffffff",
-      scale: 2,
-    });
-    const imageData = canvas.toDataURL("image/png");
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     const margin = 12;
-    const imageWidth = pageWidth - margin * 2;
-    const imageHeight = (canvas.height * imageWidth) / canvas.width;
+    const pageBottom = pageHeight - margin;
     const pageContentHeight = pageHeight - margin * 2;
-    let remainingHeight = imageHeight;
-    let imageTop = margin;
+    const imageWidth = pageWidth - margin * 2;
+    let cursorY = margin;
 
-    pdf.addImage(imageData, "PNG", margin, imageTop, imageWidth, imageHeight);
-    remainingHeight -= pageContentHeight;
+    const addCanvas = (canvas: HTMLCanvasElement, gapAfter = 0) => {
+      const imageHeight = (canvas.height * imageWidth) / canvas.width;
 
-    while (remainingHeight > 1) {
-      imageTop -= pageContentHeight;
-      pdf.addPage();
-      pdf.addImage(imageData, "PNG", margin, imageTop, imageWidth, imageHeight);
-      remainingHeight -= pageContentHeight;
+      if (imageHeight <= pageContentHeight) {
+        if (cursorY > margin && cursorY + imageHeight > pageBottom) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", margin, cursorY, imageWidth, imageHeight);
+        cursorY += imageHeight + gapAfter;
+        return;
+      }
+
+      if (cursorY > margin) {
+        pdf.addPage();
+        cursorY = margin;
+      }
+
+      const pixelsPerMm = canvas.width / imageWidth;
+      const sliceHeight = Math.floor(pageContentHeight * pixelsPerMm);
+      let offsetY = 0;
+
+      while (offsetY < canvas.height) {
+        const currentSliceHeight = Math.min(sliceHeight, canvas.height - offsetY);
+        const sliceCanvas = document.createElement("canvas");
+        const sliceContext = sliceCanvas.getContext("2d");
+
+        if (!sliceContext) {
+          throw new Error("Could not prepare PDF page.");
+        }
+
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = currentSliceHeight;
+        sliceContext.drawImage(
+          canvas,
+          0,
+          offsetY,
+          canvas.width,
+          currentSliceHeight,
+          0,
+          0,
+          canvas.width,
+          currentSliceHeight,
+        );
+
+        const sliceHeightMm = currentSliceHeight / pixelsPerMm;
+        pdf.addImage(
+          sliceCanvas.toDataURL("image/png"),
+          "PNG",
+          margin,
+          cursorY,
+          imageWidth,
+          sliceHeightMm,
+        );
+
+        offsetY += currentSliceHeight;
+        cursorY += sliceHeightMm;
+
+        if (offsetY < canvas.height) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+      }
+
+      cursorY += gapAfter;
+    };
+
+    const renderElement = async (element: HTMLElement, gapAfter = 0) => {
+      const canvas = await html2canvas(element, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+      });
+
+      addCanvas(canvas, gapAfter);
+    };
+
+    const header = exportDocument.querySelector<HTMLElement>(".export-document-header");
+    const cards = Array.from(exportDocument.querySelectorAll<HTMLElement>(".export-document-card"));
+
+    if (header) {
+      await renderElement(header, 8);
+    }
+
+    for (const card of cards) {
+      await renderElement(card, 6);
     }
 
     pdf.save(getExportFileName(selectedDateKey, "pdf"));
   };
 
-  const handleExport = async () => {
+  const handleExport = async (format: ExportFormat) => {
     if (!canExport) {
       return;
     }
 
+    setIsExportMenuOpen(false);
     setExporting(true);
     setExportError("");
 
     try {
-      if (exportFormat === "txt") {
+      if (format === "txt") {
         handleTextExport();
-      } else {
+      } else if (format === "pdf") {
         await handlePdfExport();
+      } else {
+        await handleExcelExport();
       }
     } catch (downloadError) {
       console.error(downloadError);
@@ -441,6 +588,34 @@ function BoardPage({
     }
   };
 
+  const exportMenu = (
+    <div className="export-dropdown" ref={exportMenuRef}>
+      <button
+        className="ghost-button export-menu-button"
+        type="button"
+        onClick={() => setIsExportMenuOpen((isOpen) => !isOpen)}
+        disabled={!canExport}
+        aria-expanded={isExportMenuOpen}
+        aria-haspopup="menu"
+      >
+        {exporting ? "저장 중" : "내보내기"}
+      </button>
+      {isExportMenuOpen && (
+        <div className="export-menu" role="menu" aria-label="내보내기 형식 선택">
+          <button type="button" role="menuitem" onClick={() => void handleExport("txt")}>
+            텍스트 파일
+          </button>
+          <button type="button" role="menuitem" onClick={() => void handleExport("pdf")}>
+            PDF
+          </button>
+          <button type="button" role="menuitem" onClick={() => void handleExport("xlsx")}>
+            Excel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <section className="page-panel board-panel">
       <div className="section-heading">
@@ -448,30 +623,7 @@ function BoardPage({
         <p className="section-date">{formatKoreaDate(selectedDate)}</p>
       </div>
 
-      <div className="export-controls" aria-label="나눔 내보내기">
-        <label className="export-format-field">
-          <span>내보내기</span>
-          <select
-            value={exportFormat}
-            onChange={(event) => {
-              setExportFormat(event.target.value as ExportFormat);
-              setExportError("");
-            }}
-            disabled={loading || exporting}
-          >
-            <option value="txt">텍스트 파일</option>
-            <option value="pdf">PDF</option>
-          </select>
-        </label>
-        <button
-          className="secondary-button export-button"
-          type="button"
-          onClick={handleExport}
-          disabled={!canExport}
-        >
-          {exporting ? "저장 중" : "저장하기"}
-        </button>
-      </div>
+      {topbarActionsElement && createPortal(exportMenu, topbarActionsElement)}
 
       {loading && <p className="state-text">불러오는 중입니다.</p>}
       {error && <p className="form-message error-text">{error}</p>}
@@ -512,9 +664,11 @@ function BoardPage({
       </div>
 
       <div className="export-document" ref={exportDocumentRef} aria-hidden="true">
-        <h1>나눔 게시판</h1>
-        <p className="export-document-date">{formatKoreaDate(selectedDate)}</p>
-        <p className="export-document-count">총 {shares.length}개</p>
+        <div className="export-document-header">
+          <h1>나눔 게시판</h1>
+          <p className="export-document-date">{formatKoreaDate(selectedDate)}</p>
+          <p className="export-document-count">총 {shares.length}개</p>
+        </div>
         <div className="export-document-list">
           {shares.map((share, index) => (
             <article className="export-document-card" key={share.id}>
