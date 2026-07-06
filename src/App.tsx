@@ -138,7 +138,11 @@ function App() {
         />
       )}
       {route === "/board" && (
-        <BoardPage selectedDate={selectedDate} selectedDateKey={selectedDateKey} />
+        <BoardPage
+          selectedDate={selectedDate}
+          selectedDateKey={selectedDateKey}
+          onDateChange={setSelectedDate}
+        />
       )}
       {route === "/draw" && (
         <DrawPage selectedDate={selectedDate} selectedDateKey={selectedDateKey} />
@@ -330,9 +334,11 @@ function WritePage({
 function BoardPage({
   selectedDate,
   selectedDateKey,
+  onDateChange,
 }: {
   selectedDate: Date;
   selectedDateKey: string;
+  onDateChange: (date: Date) => void;
 }) {
   const [shares, setShares] = useState<Share[]>([]);
   const [drawnShareIds, setDrawnShareIds] = useState<Set<string>>(() => new Set());
@@ -620,7 +626,7 @@ function BoardPage({
     <section className="page-panel board-panel">
       <div className="section-heading">
         <h1>나눔 게시판</h1>
-        <p className="section-date">{formatKoreaDate(selectedDate)}</p>
+        <DateSelector selectedDate={selectedDate} onDateChange={onDateChange} />
       </div>
 
       {topbarActionsElement && createPortal(exportMenu, topbarActionsElement)}

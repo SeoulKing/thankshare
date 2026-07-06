@@ -305,6 +305,12 @@ h1 {
   font-size: 3.5rem;
 }
 
+.section-heading .date-selector {
+  justify-content: center;
+  width: fit-content;
+  margin: 12px auto 0;
+}
+
 .section-date {
   margin: 12px 0 0;
   color: var(--muted);
