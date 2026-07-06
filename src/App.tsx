@@ -18,9 +18,13 @@ import { isFirebaseConfigured, missingFirebaseEnv } from "./lib/firebase";
 import type { Draw, NewShareInput, Share } from "./types";
 
 const ADMIN_SESSION_KEY = "thankyou-admin-unlocked";
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 60_000;
+const MOBILE_DOWNLOAD_USER_AGENT_PATTERN =
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 
 type Route = "/" | "/write" | "/board" | "/draw";
 type ExportFormat = "txt" | "pdf" | "xlsx";
+type ReservedDownloadWindow = Window | null;
 
 function getRoute(pathname: string): Route {
   if (pathname === "/write" || pathname === "/board" || pathname === "/draw") {
@@ -76,8 +80,123 @@ function buildShareExportRows(shares: Share[]) {
   }));
 }
 
-function downloadBlob(blob: Blob, fileName: string) {
+function escapeHtml(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttribute(value: string) {
+  return escapeHtml(value).replace(/"/g, "&quot;");
+}
+
+function isLikelyMobileBrowser() {
+  return (
+    MOBILE_DOWNLOAD_USER_AGENT_PATTERN.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent))
+  );
+}
+
+function reserveDownloadWindow() {
+  if (!isLikelyMobileBrowser()) {
+    return null;
+  }
+
+  const downloadWindow = window.open("", "_blank");
+
+  if (!downloadWindow) {
+    return null;
+  }
+
+  try {
+    downloadWindow.opener = null;
+    downloadWindow.document.title = "파일 준비 중";
+    downloadWindow.document.body.style.margin = "0";
+    downloadWindow.document.body.style.padding = "24px";
+    downloadWindow.document.body.style.fontFamily =
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    downloadWindow.document.body.textContent = "파일을 준비 중입니다.";
+  } catch {
+    downloadWindow.close();
+    return null;
+  }
+
+  return downloadWindow;
+}
+
+function writeDownloadWindow(downloadWindow: ReservedDownloadWindow, url: string, fileName: string) {
+  if (!downloadWindow || downloadWindow.closed) {
+    return false;
+  }
+
+  const safeUrl = escapeHtmlAttribute(url);
+  const safeFileName = escapeHtmlAttribute(fileName);
+
+  try {
+    downloadWindow.document.open();
+    downloadWindow.document.write(`<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeFileName}</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        color: #111827;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 16px;
+        border-radius: 8px;
+        background: #2f7f68;
+        color: #ffffff;
+        font-weight: 800;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <p>파일 준비가 끝났습니다.</p>
+    <a id="download-link" href="${safeUrl}" download="${safeFileName}">저장하기</a>
+    <script>
+      document.getElementById("download-link").click();
+    </script>
+  </body>
+</html>`);
+    downloadWindow.document.close();
+    downloadWindow.focus();
+  } catch {
+    return false;
+  }
+
+  return true;
+}
+
+function writeDownloadError(downloadWindow: ReservedDownloadWindow) {
+  if (!downloadWindow || downloadWindow.closed) {
+    return;
+  }
+
+  try {
+    downloadWindow.document.body.textContent = "파일을 저장하지 못했습니다. 이전 화면에서 다시 시도해주세요.";
+  } catch {
+    downloadWindow.close();
+  }
+}
+
+function downloadBlob(blob: Blob, fileName: string, downloadWindow?: ReservedDownloadWindow) {
   const url = URL.createObjectURL(blob);
+
+  if (writeDownloadWindow(downloadWindow ?? null, url, fileName)) {
+    window.setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_REVOKE_DELAY_MS);
+    return;
+  }
+
   const link = document.createElement("a");
 
   link.href = url;
@@ -85,7 +204,7 @@ function downloadBlob(blob: Blob, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  window.setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_REVOKE_DELAY_MS);
 }
 
 function App() {
@@ -346,6 +465,7 @@ function BoardPage({
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [exportToast, setExportToast] = useState<{ id: number; message: string } | null>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [topbarActionsElement, setTopbarActionsElement] = useState<HTMLElement | null>(null);
   const exportDocumentRef = useRef<HTMLDivElement>(null);
@@ -355,6 +475,16 @@ function BoardPage({
   useEffect(() => {
     setTopbarActionsElement(document.getElementById("topbar-page-actions"));
   }, []);
+
+  useEffect(() => {
+    if (!exportToast) {
+      return;
+    }
+
+    const hideToast = window.setTimeout(() => setExportToast(null), 2600);
+
+    return () => window.clearTimeout(hideToast);
+  }, [exportToast]);
 
   useEffect(() => {
     if (!isExportMenuOpen) {
@@ -400,6 +530,7 @@ function BoardPage({
     setLoading(true);
     setError("");
     setExportError("");
+    setExportToast(null);
 
     void Promise.all([getSharesByDate(selectedDateKey), getDrawsByDate(selectedDateKey)])
       .then(([dateShares, dateDraws]) => {
@@ -428,14 +559,14 @@ function BoardPage({
     };
   }, [selectedDateKey]);
 
-  const handleTextExport = () => {
+  const handleTextExport = (downloadWindow: ReservedDownloadWindow) => {
     const text = buildShareExportText(shares, selectedDate);
     const blob = new Blob(["\ufeff", text], { type: "text/plain;charset=utf-8" });
 
-    downloadBlob(blob, getExportFileName(selectedDateKey, "txt"));
+    downloadBlob(blob, getExportFileName(selectedDateKey, "txt"), downloadWindow);
   };
 
-  const handleExcelExport = async () => {
+  const handleExcelExport = async (downloadWindow: ReservedDownloadWindow) => {
     const XLSX = await import("xlsx");
     const worksheet = XLSX.utils.json_to_sheet(buildShareExportRows(shares));
     worksheet["!cols"] = [
@@ -448,13 +579,19 @@ function BoardPage({
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "나눔");
-    XLSX.writeFile(workbook, getExportFileName(selectedDateKey, "xlsx"), {
+    const excelData = XLSX.write(workbook, {
       bookType: "xlsx",
       compression: true,
+      type: "array",
     });
+    const blob = new Blob([excelData], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    downloadBlob(blob, getExportFileName(selectedDateKey, "xlsx"), downloadWindow);
   };
 
-  const handlePdfExport = async () => {
+  const handlePdfExport = async (downloadWindow: ReservedDownloadWindow) => {
     const exportDocument = exportDocumentRef.current;
 
     if (!exportDocument) {
@@ -566,7 +703,7 @@ function BoardPage({
       await renderElement(card, 6);
     }
 
-    pdf.save(getExportFileName(selectedDateKey, "pdf"));
+    downloadBlob(pdf.output("blob"), getExportFileName(selectedDateKey, "pdf"), downloadWindow);
   };
 
   const handleExport = async (format: ExportFormat) => {
@@ -574,20 +711,26 @@ function BoardPage({
       return;
     }
 
+    const downloadWindow = reserveDownloadWindow();
+
     setIsExportMenuOpen(false);
     setExporting(true);
     setExportError("");
+    setExportToast(null);
 
     try {
       if (format === "txt") {
-        handleTextExport();
+        handleTextExport(downloadWindow);
       } else if (format === "pdf") {
-        await handlePdfExport();
+        await handlePdfExport(downloadWindow);
       } else {
-        await handleExcelExport();
+        await handleExcelExport(downloadWindow);
       }
+
+      setExportToast({ id: Date.now(), message: "파일 다운로드가 완료되었습니다." });
     } catch (downloadError) {
       console.error(downloadError);
+      writeDownloadError(downloadWindow);
       setExportError("파일을 저장하지 못했습니다. 다시 시도해주세요.");
     } finally {
       setExporting(false);
@@ -630,6 +773,11 @@ function BoardPage({
       </div>
 
       {topbarActionsElement && createPortal(exportMenu, topbarActionsElement)}
+      {exportToast && (
+        <div className="system-toast" key={exportToast.id} role="status">
+          {exportToast.message}
+        </div>
+      )}
 
       {loading && <p className="state-text">불러오는 중입니다.</p>}
       {error && <p className="form-message error-text">{error}</p>}
